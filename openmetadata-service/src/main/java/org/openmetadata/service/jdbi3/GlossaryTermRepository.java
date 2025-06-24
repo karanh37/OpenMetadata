@@ -64,6 +64,7 @@ import org.jdbi.v3.sqlobject.transaction.Transaction;
 import org.openmetadata.common.utils.CommonUtil;
 import org.openmetadata.schema.EntityInterface;
 import org.openmetadata.schema.api.AddGlossaryToAssetsRequest;
+import org.openmetadata.schema.api.MoveGlossaryTermRequest;
 import org.openmetadata.schema.api.ValidateGlossaryTagsRequest;
 import org.openmetadata.schema.api.data.TermReference;
 import org.openmetadata.schema.api.feed.CloseTask;
@@ -578,6 +579,69 @@ public class GlossaryTermRepository extends EntityRepository<GlossaryTerm> {
     }
 
     return result.withSuccessRequest(success);
+  }
+
+  public Response moveGlossaryTermAsync(
+      UriInfo uriInfo, SecurityContext securityContext, UUID termId, MoveGlossaryTermRequest moveRequest) {
+    try {
+      // Get the term to be moved
+      GlossaryTerm originalTerm = get(uriInfo, termId, getFields("*"));
+      
+      // Validate and prepare the move operation
+      GlossaryTerm updatedTerm = prepareTermForMove(originalTerm, moveRequest);
+      
+      // Perform the move operation asynchronously
+      // For now, we'll do it synchronously but this can be enhanced with actual async processing
+      GlossaryTerm movedTerm = performMove(originalTerm, updatedTerm);
+      
+      return Response.ok(addHref(uriInfo, movedTerm)).build();
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to move glossary term: " + e.getMessage(), e);
+    }
+  }
+
+  private GlossaryTerm prepareTermForMove(GlossaryTerm originalTerm, MoveGlossaryTermRequest moveRequest) {
+    GlossaryTerm updatedTerm = JsonUtils.deepCopy(originalTerm, GlossaryTerm.class);
+    
+    // Handle glossary change
+    if (moveRequest.getGlossary() != null && !moveRequest.getGlossary().isEmpty()) {
+      // Get the target glossary
+      EntityRepository<Glossary> glossaryRepository = Entity.getEntityRepository(Entity.GLOSSARY);
+      Glossary targetGlossary = glossaryRepository.getByName(null, moveRequest.getGlossary(), glossaryRepository.getFields("id,name,fullyQualifiedName"));
+      updatedTerm.setGlossary(targetGlossary.getEntityReference());
+    }
+    
+    // Handle parent change
+    if (moveRequest.getParent() != null && !moveRequest.getParent().isEmpty()) {
+      // Get the new parent term
+      GlossaryTerm parentTerm = getByName(null, moveRequest.getParent(), getFields("id,name,fullyQualifiedName,glossary"));
+      
+      // Validate that the parent belongs to the target glossary
+      if (updatedTerm.getGlossary() != null && 
+          !parentTerm.getGlossary().getId().equals(updatedTerm.getGlossary().getId())) {
+        throw new IllegalArgumentException(
+          String.format("Parent term %s does not belong to target glossary %s", 
+            moveRequest.getParent(), updatedTerm.getGlossary().getFullyQualifiedName()));
+      }
+      
+      updatedTerm.setParent(parentTerm.getEntityReference());
+    } else {
+      // Moving to root - clear parent
+      updatedTerm.setParent(null);
+    }
+    
+    // Update the fully qualified name based on new hierarchy
+    setFullyQualifiedName(updatedTerm);
+    
+    return updatedTerm;
+  }
+
+  private GlossaryTerm performMove(GlossaryTerm originalTerm, GlossaryTerm updatedTerm) {
+    // Create the updater and perform the move
+    GlossaryTermUpdater updater = new GlossaryTermUpdater(originalTerm, updatedTerm, Operation.PUT);
+    updater.update();
+    
+    return updatedTerm;
   }
 
   protected EntityReference getGlossary(GlossaryTerm term) {
@@ -1277,12 +1341,26 @@ public class GlossaryTermRepository extends EntityRepository<GlossaryTerm> {
     }
 
     private void validateParent() {
-      String fqn = original.getFullyQualifiedName();
-      String newParentFqn =
-          updated.getParent() == null ? null : updated.getParent().getFullyQualifiedName();
-      // A glossary term can't be moved under its child
-      if (newParentFqn != null && FullyQualifiedName.isParent(newParentFqn, fqn)) {
-        throw new IllegalArgumentException(invalidGlossaryTermMove(fqn, newParentFqn));
+      // Parent validation - for move operations, we allow cross-glossary moves
+      if (updated.getParent() == null) {
+        return; // No parent to validate
+      }
+      
+      // Skip traditional hierarchy validation for cross-glossary moves
+      // Allow parent from different glossary during move operations
+      if (operation == Operation.PUT && !Objects.equals(original.getGlossary().getId(), updated.getGlossary().getId())) {
+        // This is a cross-glossary move, validate that parent belongs to target glossary
+        String targetGlossaryFqn = FullyQualifiedName.build(updated.getGlossary().getName());
+        if (!updated.getParent().getFullyQualifiedName().startsWith(targetGlossaryFqn)) {
+          throw new IllegalArgumentException(
+              String.format(
+                  "Invalid move - parent [%s] does not belong to target glossary[%s]",
+                  updated.getParent().getFullyQualifiedName(),
+                  updated.getGlossary().getFullyQualifiedName()));
+        }
+      } else {
+        // Traditional validation for same-glossary operations
+        validateHierarchy(updated);
       }
     }
 

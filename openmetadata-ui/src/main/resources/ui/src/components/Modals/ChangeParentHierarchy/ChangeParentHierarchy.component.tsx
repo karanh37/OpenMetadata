@@ -17,7 +17,9 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { API_RES_MAX_SIZE } from '../../../constants/constants';
 import { Status } from '../../../generated/entity/data/glossaryTerm';
-import { getGlossaryTerms } from '../../../rest/glossaryAPI';
+import { Glossary } from '../../../generated/entity/data/glossary';
+import { MoveGlossaryTermRequest } from '../../../generated/api/moveGlossaryTermRequest';
+import { getGlossariesList, getGlossaryTerms, moveGlossaryTermAsync } from '../../../rest/glossaryAPI';
 import { Transi18next } from '../../../utils/CommonUtils';
 import { getEntityName } from '../../../utils/EntityUtils';
 import { StatusClass } from '../../../utils/GlossaryUtils';
@@ -41,28 +43,50 @@ const ChangeParentHierarchy = ({
   });
   const [confirmCheckboxChecked, setConfirmCheckboxChecked] = useState(false);
 
-  const [options, setOptions] = useState<SelectOptions[]>([]);
+  const [termOptions, setTermOptions] = useState<SelectOptions[]>([]);
+  const [glossaryOptions, setGlossaryOptions] = useState<SelectOptions[]>([]);
 
   const hasReviewers = Boolean(
     selectedData.reviewers && selectedData.reviewers.length > 0
   );
 
-  const fetchGlossaryTerm = async () => {
+  const fetchData = async () => {
     setLoadingState((prev) => ({ ...prev, isFetching: true }));
     try {
-      const { data } = await getGlossaryTerms({
-        glossary: selectedData.glossary.id,
+      // Fetch all glossaries
+      const { data: glossaries } = await getGlossariesList({
         limit: API_RES_MAX_SIZE,
       });
 
-      setOptions(
-        data
-          .filter((item) => item.id !== selectedData.id)
-          .map((item) => ({
-            label: getEntityName(item),
-            value: item.fullyQualifiedName ?? '',
-          }))
-      );
+      // Create glossary options
+      const glossaryOpts = glossaries.map((glossary) => ({
+        label: getEntityName(glossary),
+        value: glossary.fullyQualifiedName ?? '',
+      }));
+      setGlossaryOptions(glossaryOpts);
+
+      // Fetch all glossary terms from all glossaries
+      const allTerms: any[] = [];
+      for (const glossary of glossaries) {
+        try {
+          const { data: terms } = await getGlossaryTerms({
+            glossary: glossary.id,
+            limit: API_RES_MAX_SIZE,
+          });
+          allTerms.push(...terms);
+        } catch (error) {
+          console.warn(`Failed to fetch terms for glossary ${glossary.name}:`, error);
+        }
+      }
+
+      // Create term options (excluding the current term)
+      const termOpts = allTerms
+        .filter((item) => item.id !== selectedData.id)
+        .map((item) => ({
+          label: `${getEntityName(item)} (${item.glossary?.name || 'Unknown'})`,
+          value: item.fullyQualifiedName ?? '',
+        }));
+      setTermOptions(termOpts);
     } catch (error) {
       showErrorToast(error as AxiosError);
     } finally {
@@ -70,14 +94,25 @@ const ChangeParentHierarchy = ({
     }
   };
 
-  const handleSubmit = async (value: { parent: string }) => {
+  const handleSubmit = async (values: { parent?: string; glossary?: string }) => {
     setLoadingState((prev) => ({ ...prev, isSaving: true }));
-    await onSubmit(value.parent);
-    setLoadingState((prev) => ({ ...prev, isSaving: false }));
+    try {
+      const moveRequest: MoveGlossaryTermRequest = {
+        parent: values.parent || undefined,
+        glossary: values.glossary || undefined,
+      };
+      
+      await moveGlossaryTermAsync(selectedData.id, moveRequest);
+      await onSubmit(values.parent || '', values.glossary);
+    } catch (error) {
+      showErrorToast(error as AxiosError);
+    } finally {
+      setLoadingState((prev) => ({ ...prev, isSaving: false }));
+    }
   };
 
   useEffect(() => {
-    fetchGlossaryTerm();
+    fetchData();
   }, []);
 
   return (
@@ -91,36 +126,52 @@ const ChangeParentHierarchy = ({
         disabled: hasReviewers && !confirmCheckboxChecked,
       }}
       okText={t('label.submit')}
-      title={t('label.change-entity', { entity: t('label.parent') })}
+      title={t('label.move-entity', { entity: t('label.glossary-term') })}
       onCancel={onCancel}>
       <Form
         form={form}
         id="change-parent-hierarchy-modal"
         layout="vertical"
         onFinish={handleSubmit}>
+        
         <Form.Item
           label={t('label.select-field', {
-            field: t('label.parent'),
+            field: t('label.target-glossary'),
           })}
-          name="parent"
-          rules={[
-            {
-              required: true,
-              message: t('label.field-required', {
-                field: t('label.parent'),
-              }),
-            },
-          ]}>
+          name="glossary"
+          tooltip={t('message.select-target-glossary-help')}>
           <Select
             showSearch
+            allowClear
+            data-testid="target-glossary-select"
+            filterOption={(input, option) =>
+              (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+            }
+            loading={loadingState.isFetching}
+            options={glossaryOptions}
+            placeholder={t('label.select-field', {
+              field: t('label.glossary'),
+            })}
+          />
+        </Form.Item>
+
+        <Form.Item
+          label={t('label.select-field', {
+            field: t('label.parent-term'),
+          })}
+          name="parent"
+          tooltip={t('message.select-parent-term-help')}>
+          <Select
+            showSearch
+            allowClear
             data-testid="change-parent-select"
             filterOption={(input, option) =>
               (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
             }
             loading={loadingState.isFetching}
-            options={options}
+            options={termOptions}
             placeholder={t('label.select-field', {
-              field: t('label.parent'),
+              field: t('label.parent-term'),
             })}
           />
         </Form.Item>

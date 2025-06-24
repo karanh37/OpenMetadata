@@ -1,0 +1,19 @@
+{
+  "$id": "https://open-metadata.org/schema/api/moveGlossaryTermRequest.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MoveGlossaryTermRequest",
+  "description": "Request to move a glossary term to a new parent or glossary",
+  "type": "object",
+  "javaType": "org.openmetadata.schema.api.MoveGlossaryTermRequest",
+  "properties": {
+    "parent": {
+      "description": "Fully qualified name of the new parent glossary term. If not provided, the term will be moved to the root of the target glossary.",
+      "type": "string"
+    },
+    "glossary": {
+      "description": "Fully qualified name of the target glossary. If not provided, the term will be moved within the same glossary.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

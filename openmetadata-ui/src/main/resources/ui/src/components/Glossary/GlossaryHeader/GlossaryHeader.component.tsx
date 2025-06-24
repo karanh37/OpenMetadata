@@ -38,10 +38,10 @@ import EntityDeleteModal from '../../../components/Modals/EntityDeleteModal/Enti
 import EntityNameModal from '../../../components/Modals/EntityNameModal/EntityNameModal.component';
 import { FQN_SEPARATOR_CHAR } from '../../../constants/char.constants';
 import { DE_ACTIVE_COLOR } from '../../../constants/constants';
-import { ExportTypes } from '../../../constants/Export.constants';
+import { ExportTypes } from '../../../constants/constants';
 import { usePermissionProvider } from '../../../context/PermissionProvider/PermissionProvider';
 import { ResourceEntity } from '../../../context/PermissionProvider/PermissionProvider.interface';
-import { EntityType } from '../../../enums/entity.enum';
+import { EntityType, TabSpecificField } from '../../../enums/entity.enum';
 import { Glossary } from '../../../generated/entity/data/glossary';
 import {
   GlossaryTerm,
@@ -56,6 +56,7 @@ import {
   getGlossariesById,
   getGlossaryTermsById,
   patchGlossaryTerm,
+  moveGlossaryTermAsync,
 } from '../../../rest/glossaryAPI';
 import { getEntityDeleteMessage } from '../../../utils/CommonUtils';
 import {
@@ -78,6 +79,8 @@ import StyleModal from '../../Modals/StyleModal/StyleModal.component';
 import { GlossaryStatusBadge } from '../GlossaryStatusBadge/GlossaryStatusBadge.component';
 import { GlossaryHeaderProps } from './GlossaryHeader.interface';
 import './glossery-header.less';
+import { MoveGlossaryTermRequest } from '../../../generated/api/moveGlossaryTermRequest';
+
 const GlossaryHeader = ({
   onDelete,
   onAssetAdd,
@@ -269,20 +272,24 @@ const GlossaryHeader = ({
     setIsStyleEditing(false);
   };
 
-  const onChangeParentSave = async (parentFQN: string) => {
-    const newTermData = {
-      ...selectedData,
-      parent: {
-        fullyQualifiedName: parentFQN,
-      },
-    };
-    const jsonPatch = compare(selectedData, newTermData);
-
+  const onChangeParentSave = async (parentFQN: string, glossaryFQN?: string) => {
     try {
-      const { fullyQualifiedName, name } = await patchGlossaryTerm(
+      const moveRequest: MoveGlossaryTermRequest = {};
+      
+      if (parentFQN) {
+        moveRequest.parent = parentFQN;
+      }
+      
+      if (glossaryFQN) {
+        moveRequest.glossary = glossaryFQN;
+      }
+      
+      // Use the new async move API
+      const { fullyQualifiedName, name } = await moveGlossaryTermAsync(
         selectedData.id,
-        jsonPatch
+        moveRequest
       );
+      
       history.push(getGlossaryPath(fullyQualifiedName ?? name));
     } catch (error) {
       showErrorToast(error as AxiosError);

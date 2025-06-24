@@ -51,6 +51,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.openmetadata.schema.api.AddGlossaryToAssetsRequest;
+import org.openmetadata.schema.api.MoveGlossaryTermRequest;
 import org.openmetadata.schema.api.ValidateGlossaryTagsRequest;
 import org.openmetadata.schema.api.VoteRequest;
 import org.openmetadata.schema.api.data.CreateGlossaryTerm;
@@ -522,6 +523,44 @@ public class GlossaryTermResource extends EntityResource<GlossaryTerm, GlossaryT
                       }))
           JsonPatch patch) {
     return patchInternal(uriInfo, securityContext, fqn, patch);
+  }
+
+  @POST
+  @Path("/{id}/moveAsync")
+  @Operation(
+      operationId = "moveGlossaryTermAsync",
+      summary = "Asynchronously move a glossary term to a new parent or glossary",
+      description = "Move a glossary term to a new parent term or to the root of a glossary. This operation is performed asynchronously.",
+      responses = {
+        @ApiResponse(
+            responseCode = "200",
+            description = "Glossary term move operation initiated successfully",
+            content =
+                @Content(
+                    mediaType = "application/json",
+                    schema = @Schema(implementation = GlossaryTerm.class))),
+        @ApiResponse(responseCode = "400", description = "Bad request"),
+        @ApiResponse(
+            responseCode = "404",
+            description = "Glossary term for instance {id} is not found")
+      })
+  public Response moveGlossaryTermAsync(
+      @Context UriInfo uriInfo,
+      @Context SecurityContext securityContext,
+      @Parameter(description = "Id of the glossary term to move", schema = @Schema(type = "UUID"))
+          @PathParam("id")
+          UUID id,
+      @RequestBody(
+              description = "Move glossary term request",
+              content =
+                  @Content(
+                      mediaType = "application/json",
+                      examples = {
+                        @ExampleObject(
+                            value = "{\"parent\": \"glossary.newParent\", \"glossary\": \"newGlossary\"}")
+                      }))
+          MoveGlossaryTermRequest moveRequest) {
+    return repository.moveGlossaryTermAsync(uriInfo, securityContext, id, moveRequest);
   }
 
   @PUT

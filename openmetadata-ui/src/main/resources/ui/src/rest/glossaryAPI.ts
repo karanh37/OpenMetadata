@@ -20,6 +20,7 @@ import { ES_MAX_PAGE_SIZE, PAGE_SIZE_MEDIUM } from '../constants/constants';
 import { TabSpecificField } from '../enums/entity.enum';
 import { SearchIndex } from '../enums/search.enum';
 import { AddGlossaryToAssetsRequest } from '../generated/api/addGlossaryToAssetsRequest';
+import { MoveGlossaryTermRequest } from '../generated/api/moveGlossaryTermRequest';
 import { CreateGlossary } from '../generated/api/data/createGlossary';
 import { CreateGlossaryTerm } from '../generated/api/data/createGlossaryTerm';
 import { EntityReference, Glossary } from '../generated/entity/data/glossary';
@@ -159,6 +160,18 @@ export const patchGlossaryTerm = async (id: string, patch: Operation[]) => {
     Operation[],
     AxiosResponse<GlossaryTerm>
   >(`/glossaryTerms/${id}`, patch);
+
+  return response.data;
+};
+
+export const moveGlossaryTermAsync = async (
+  id: string,
+  moveRequest: MoveGlossaryTermRequest
+) => {
+  const response = await APIClient.post<
+    MoveGlossaryTermRequest,
+    AxiosResponse<GlossaryTerm>
+  >(`/glossaryTerms/${id}/moveAsync`, moveRequest);
 
   return response.data;
 };

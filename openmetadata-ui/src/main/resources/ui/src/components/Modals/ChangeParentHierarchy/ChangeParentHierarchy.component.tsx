@@ -16,7 +16,9 @@ import { AxiosError } from 'axios';
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { API_RES_MAX_SIZE } from '../../../constants/constants';
+import { Glossary } from '../../../generated/entity/data/glossary';
 import { Status } from '../../../generated/entity/data/glossaryTerm';
+import { getGlossariesList } from '../../../rest/glossaryAPI';
 import { getGlossaryTerms } from '../../../rest/glossaryAPI';
 import { Transi18next } from '../../../utils/CommonUtils';
 import { getEntityName } from '../../../utils/EntityUtils';
@@ -26,6 +28,7 @@ import StatusBadge from '../../common/StatusBadge/StatusBadge.component';
 import {
   ChangeParentHierarchyProps,
   SelectOptions,
+  MoveDestination,
 } from './ChangeParentHierarchy.interface';
 
 const ChangeParentHierarchy = ({
@@ -37,48 +40,118 @@ const ChangeParentHierarchy = ({
   const [form] = Form.useForm();
   const [loadingState, setLoadingState] = useState({
     isSaving: false,
-    isFetching: true,
+    isFetchingGlossaries: true,
+    isFetchingTerms: false,
   });
   const [confirmCheckboxChecked, setConfirmCheckboxChecked] = useState(false);
 
-  const [options, setOptions] = useState<SelectOptions[]>([]);
+  const [glossaryOptions, setGlossaryOptions] = useState<SelectOptions[]>([]);
+  const [termOptions, setTermOptions] = useState<SelectOptions[]>([]);
+  const [selectedGlossary, setSelectedGlossary] = useState<string>(
+    selectedData.glossary.fullyQualifiedName || ''
+  );
 
   const hasReviewers = Boolean(
     selectedData.reviewers && selectedData.reviewers.length > 0
   );
 
-  const fetchGlossaryTerm = async () => {
-    setLoadingState((prev) => ({ ...prev, isFetching: true }));
+  const fetchGlossaries = async () => {
+    setLoadingState((prev) => ({ ...prev, isFetchingGlossaries: true }));
     try {
-      const { data } = await getGlossaryTerms({
-        glossary: selectedData.glossary.id,
+      const { data } = await getGlossariesList({
         limit: API_RES_MAX_SIZE,
       });
 
-      setOptions(
-        data
-          .filter((item) => item.id !== selectedData.id)
-          .map((item) => ({
-            label: getEntityName(item),
-            value: item.fullyQualifiedName ?? '',
-          }))
+      setGlossaryOptions(
+        data.map((glossary: Glossary) => ({
+          label: getEntityName(glossary),
+          value: glossary.fullyQualifiedName ?? '',
+        }))
       );
     } catch (error) {
       showErrorToast(error as AxiosError);
     } finally {
-      setLoadingState((prev) => ({ ...prev, isFetching: false }));
+      setLoadingState((prev) => ({ ...prev, isFetchingGlossaries: false }));
     }
   };
 
-  const handleSubmit = async (value: { parent: string }) => {
+  const fetchGlossaryTerms = async (glossaryFQN: string) => {
+    if (!glossaryFQN) {
+      setTermOptions([]);
+      return;
+    }
+
+    setLoadingState((prev) => ({ ...prev, isFetchingTerms: true }));
+    try {
+      // First get the glossary by FQN to get its ID
+      const glossaries = await getGlossariesList({
+        limit: API_RES_MAX_SIZE,
+      });
+      
+      const targetGlossary = glossaries.data.find(
+        (g: Glossary) => g.fullyQualifiedName === glossaryFQN
+      );
+
+      if (!targetGlossary) {
+        setTermOptions([]);
+        return;
+      }
+
+      const { data } = await getGlossaryTerms({
+        glossary: targetGlossary.id,
+        limit: API_RES_MAX_SIZE,
+      });
+
+      const filteredTerms = data.filter((item: any) => {
+        // Exclude the current term and its children
+        return (
+          item.id !== selectedData.id &&
+          !item.fullyQualifiedName?.startsWith(selectedData.fullyQualifiedName + '.')
+        );
+      });
+
+      setTermOptions([
+        {
+          label: `${t('label.root-of')} ${getEntityName(targetGlossary)}`,
+          value: '', // Empty value represents glossary root
+        },
+        ...filteredTerms.map((item: any) => ({
+          label: getEntityName(item),
+          value: item.fullyQualifiedName ?? '',
+        })),
+      ]);
+    } catch (error) {
+      showErrorToast(error as AxiosError);
+      setTermOptions([]);
+    } finally {
+      setLoadingState((prev) => ({ ...prev, isFetchingTerms: false }));
+    }
+  };
+
+  const handleGlossaryChange = (glossaryFQN: string) => {
+    setSelectedGlossary(glossaryFQN);
+    form.setFieldValue('parent', undefined); // Reset parent selection
+    fetchGlossaryTerms(glossaryFQN);
+  };
+
+  const handleSubmit = async (values: { glossary: string; parent?: string }) => {
     setLoadingState((prev) => ({ ...prev, isSaving: true }));
-    await onSubmit(value.parent);
-    setLoadingState((prev) => ({ ...prev, isSaving: false }));
+    try {
+      await onSubmit(values.parent, values.glossary);
+    } finally {
+      setLoadingState((prev) => ({ ...prev, isSaving: false }));
+    }
   };
 
   useEffect(() => {
-    fetchGlossaryTerm();
+    fetchGlossaries();
   }, []);
+
+  useEffect(() => {
+    if (selectedGlossary) {
+      fetchGlossaryTerms(selectedGlossary);
+    }
+  }, [selectedGlossary, selectedData.id, selectedData.fullyQualifiedName]);
 
   return (
     <Modal
@@ -91,35 +164,59 @@ const ChangeParentHierarchy = ({
         disabled: hasReviewers && !confirmCheckboxChecked,
       }}
       okText={t('label.submit')}
-      title={t('label.change-entity', { entity: t('label.parent') })}
+      title={t('label.move-entity', { entity: t('label.glossary-term') })}
       onCancel={onCancel}>
       <Form
         form={form}
         id="change-parent-hierarchy-modal"
         layout="vertical"
+        initialValues={{
+          glossary: selectedData.glossary.fullyQualifiedName,
+        }}
         onFinish={handleSubmit}>
         <Form.Item
           label={t('label.select-field', {
-            field: t('label.parent'),
+            field: t('label.glossary'),
           })}
-          name="parent"
+          name="glossary"
           rules={[
             {
               required: true,
               message: t('label.field-required', {
-                field: t('label.parent'),
+                field: t('label.glossary'),
               }),
             },
           ]}>
           <Select
             showSearch
+            data-testid="change-glossary-select"
+            filterOption={(input, option) =>
+              (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+            }
+            loading={loadingState.isFetchingGlossaries}
+            options={glossaryOptions}
+            placeholder={t('label.select-field', {
+              field: t('label.glossary'),
+            })}
+            onChange={handleGlossaryChange}
+          />
+        </Form.Item>
+
+        <Form.Item
+          label={t('label.select-field', {
+            field: t('label.parent'),
+          })}
+          name="parent">
+          <Select
+            showSearch
+            allowClear
             data-testid="change-parent-select"
             filterOption={(input, option) =>
               (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
             }
-            loading={loadingState.isFetching}
-            options={options}
-            placeholder={t('label.select-field', {
+            loading={loadingState.isFetchingTerms}
+            options={termOptions}
+            placeholder={t('label.select-field-optional', {
               field: t('label.parent'),
             })}
           />

@@ -16,7 +16,6 @@ import ButtonGroup from 'antd/lib/button/button-group';
 import { ItemType } from 'antd/lib/menu/hooks/useItems';
 import { AxiosError } from 'axios';
 import classNames from 'classnames';
-import { compare } from 'fast-json-patch';
 import { cloneDeep, isEmpty, toString } from 'lodash';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -55,6 +54,7 @@ import {
   exportGlossaryInCSVFormat,
   getGlossariesById,
   getGlossaryTermsById,
+  moveGlossaryTermAsync,
   patchGlossaryTerm,
 } from '../../../rest/glossaryAPI';
 import { getEntityDeleteMessage } from '../../../utils/CommonUtils';
@@ -269,19 +269,12 @@ const GlossaryHeader = ({
     setIsStyleEditing(false);
   };
 
-  const onChangeParentSave = async (parentFQN: string) => {
-    const newTermData = {
-      ...selectedData,
-      parent: {
-        fullyQualifiedName: parentFQN,
-      },
-    };
-    const jsonPatch = compare(selectedData, newTermData);
-
+  const onChangeParentSave = async (parentFQN?: string, glossaryFQN?: string) => {
     try {
-      const { fullyQualifiedName, name } = await patchGlossaryTerm(
+      const { fullyQualifiedName, name } = await moveGlossaryTermAsync(
         selectedData.id,
-        jsonPatch
+        parentFQN,
+        glossaryFQN
       );
       history.push(getGlossaryPath(fullyQualifiedName ?? name));
     } catch (error) {

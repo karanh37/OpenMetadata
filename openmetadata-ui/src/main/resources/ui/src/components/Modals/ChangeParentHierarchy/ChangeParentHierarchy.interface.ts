@@ -11,15 +11,21 @@
  *  limitations under the License.
  */
 
+import { Glossary } from '../../../generated/entity/data/glossary';
 import { GlossaryTerm } from '../../../generated/entity/data/glossaryTerm';
 
 export interface ChangeParentHierarchyProps {
   selectedData: GlossaryTerm;
   onCancel: () => void;
-  onSubmit: (id: string) => Promise<void>;
+  onSubmit: (parentFQN?: string, glossaryFQN?: string) => Promise<void>;
 }
 
 export interface SelectOptions {
   label: string;
   value: string;
+}
+
+export interface MoveDestination {
+  glossary?: Glossary;
+  parent?: string; // Parent term FQN
 }

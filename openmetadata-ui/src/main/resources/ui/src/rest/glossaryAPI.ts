@@ -318,3 +318,23 @@ export const getFirstLevelGlossaryTerms = async (parentFQN: string) => {
 
   return data;
 };
+
+export const moveGlossaryTermAsync = async (
+  id: string,
+  parentFQN?: string,
+  glossaryFQN?: string
+): Promise<GlossaryTerm> => {
+  const params = new URLSearchParams();
+  if (parentFQN) {
+    params.append('parentFQN', parentFQN);
+  }
+  if (glossaryFQN) {
+    params.append('glossaryFQN', glossaryFQN);
+  }
+
+  const response = await APIClient.put<undefined, AxiosResponse<GlossaryTerm>>(
+    `/glossaryTerms/${id}/moveAsync?${params.toString()}`
+  );
+
+  return response.data;
+};

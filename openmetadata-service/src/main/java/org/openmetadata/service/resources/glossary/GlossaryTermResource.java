@@ -82,6 +82,7 @@ import org.openmetadata.service.security.policyevaluator.ResourceContext;
 import org.openmetadata.service.security.policyevaluator.ResourceContextInterface;
 import org.openmetadata.service.util.EntityUtil;
 import org.openmetadata.service.util.EntityUtil.Fields;
+import org.openmetadata.service.util.JsonUtils;
 import org.openmetadata.service.util.RestUtil;
 import org.openmetadata.service.util.ResultList;
 
@@ -648,6 +649,64 @@ public class GlossaryTermResource extends EntityResource<GlossaryTerm, GlossaryT
           UUID id,
       @Valid AddGlossaryToAssetsRequest request) {
     return Response.ok().entity(repository.bulkRemoveGlossaryToAssets(id, request)).build();
+  }
+
+  @PUT
+  @Path("/{id}/moveAsync")
+  @Operation(
+      operationId = "moveGlossaryTermAsync",
+      summary = "Asynchronously move a glossary term",
+      description = "Asynchronously move a glossary term to a different parent or glossary.",
+      responses = {
+        @ApiResponse(
+            responseCode = "200",
+            description = "Move operation initiated",
+            content =
+                @Content(
+                    mediaType = "application/json",
+                    schema = @Schema(implementation = GlossaryTerm.class))),
+        @ApiResponse(responseCode = "404", description = "Glossary term for instance {id} is not found")
+      })
+  public Response moveGlossaryTermAsync(
+      @Context UriInfo uriInfo,
+      @Context SecurityContext securityContext,
+      @Parameter(description = "Id of the glossary term", schema = @Schema(type = "UUID"))
+          @PathParam("id")
+          UUID id,
+      @Parameter(description = "New parent term FQN (optional, null to move to glossary root)", schema = @Schema(type = "string"))
+          @QueryParam("parentFQN")
+          String parentFQN,
+      @Parameter(description = "Target glossary FQN", schema = @Schema(type = "string"))
+          @QueryParam("glossaryFQN")
+          String glossaryFQN) {
+    
+    // Get the glossary term to be moved
+    GlossaryTerm glossaryTerm = repository.get(uriInfo, id, repository.getFields("*"), Include.NON_DELETED);
+    
+    // Create a copy of the term for modification
+    GlossaryTerm updatedTerm = JsonUtils.deepCopy(glossaryTerm, GlossaryTerm.class);
+    
+    // Update glossary reference if specified
+    if (glossaryFQN != null && !glossaryFQN.equals(glossaryTerm.getGlossary().getFullyQualifiedName())) {
+      Glossary targetGlossary = Entity.getEntityByName(GLOSSARY, glossaryFQN, "", Include.NON_DELETED);
+      updatedTerm.setGlossary(targetGlossary.getEntityReference());
+    }
+    
+    // Update parent reference
+    if (parentFQN != null && !parentFQN.isEmpty()) {
+      // Move to a specific parent term
+      GlossaryTerm parentTerm = Entity.getEntityByName(GLOSSARY_TERM, parentFQN, "", Include.NON_DELETED);
+      updatedTerm.setParent(parentTerm.getEntityReference());
+    } else {
+      // Move to glossary root (remove parent)
+      updatedTerm.setParent(null);
+    }
+    
+    // Create JSON patch from the changes
+    JsonPatch patch = JsonUtils.getJsonPatch(glossaryTerm, updatedTerm);
+    
+    // Apply the move asynchronously
+    return patchInternalAsync(uriInfo, securityContext, id, patch);
   }
 
   @DELETE

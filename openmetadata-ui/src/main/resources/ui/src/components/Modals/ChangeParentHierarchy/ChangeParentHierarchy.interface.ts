@@ -12,14 +12,22 @@
  */
 
 import { GlossaryTerm } from '../../../generated/entity/data/glossaryTerm';
+import { Glossary } from '../../../generated/entity/data/glossary';
 
 export interface ChangeParentHierarchyProps {
   selectedData: GlossaryTerm;
   onCancel: () => void;
-  onSubmit: (id: string) => Promise<void>;
+  onSubmit: (newGlossary: string, newParent?: string) => Promise<void>;
 }
 
 export interface SelectOptions {
   label: string;
   value: string;
+  type?: 'glossary' | 'term';
+  glossaryId?: string;
+}
+
+export interface MoveGlossaryTermRequest {
+  newGlossary: string;
+  newParent?: string;
 }

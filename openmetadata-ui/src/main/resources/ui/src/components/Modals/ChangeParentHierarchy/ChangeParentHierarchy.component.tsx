@@ -17,7 +17,7 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { API_RES_MAX_SIZE } from '../../../constants/constants';
 import { Status } from '../../../generated/entity/data/glossaryTerm';
-import { getGlossaryTerms } from '../../../rest/glossaryAPI';
+import { getGlossariesList, getGlossaryTerms } from '../../../rest/glossaryAPI';
 import { Transi18next } from '../../../utils/CommonUtils';
 import { getEntityName } from '../../../utils/EntityUtils';
 import { StatusClass } from '../../../utils/GlossaryUtils';
@@ -47,22 +47,69 @@ const ChangeParentHierarchy = ({
     selectedData.reviewers && selectedData.reviewers.length > 0
   );
 
-  const fetchGlossaryTerm = async () => {
+  const fetchGlossariesAndTerms = async () => {
     setLoadingState((prev) => ({ ...prev, isFetching: true }));
     try {
-      const { data } = await getGlossaryTerms({
-        glossary: selectedData.glossary.id,
+      // Fetch all glossaries
+      const { data: glossaries } = await getGlossariesList({
         limit: API_RES_MAX_SIZE,
       });
 
-      setOptions(
-        data
-          .filter((item) => item.id !== selectedData.id)
-          .map((item) => ({
-            label: getEntityName(item),
-            value: item.fullyQualifiedName ?? '',
-          }))
-      );
+      const allOptions: SelectOptions[] = [];
+
+      // Add glossary root options (for moving to root of a glossary)
+      for (const glossary of glossaries) {
+        if (glossary.id !== selectedData.glossary.id || selectedData.parent) {
+          // Allow moving to root of current glossary only if the term has a parent
+          // Allow moving to root of any other glossary
+          allOptions.push({
+            label: `📁 ${getEntityName(glossary)} (Root)`,
+            value: `glossary:${glossary.fullyQualifiedName}`,
+            type: 'glossary',
+            glossaryId: glossary.id,
+          });
+        }
+
+        // Fetch terms for each glossary
+        try {
+          const { data: terms } = await getGlossaryTerms({
+            glossary: glossary.id,
+            limit: API_RES_MAX_SIZE,
+          });
+
+          // Add term options, excluding the current term and its descendants
+          for (const term of terms) {
+            const isCurrentTerm = term.id === selectedData.id;
+            const isDescendant = term.fullyQualifiedName?.startsWith(
+              selectedData.fullyQualifiedName + '.'
+            );
+
+            if (!isCurrentTerm && !isDescendant) {
+              allOptions.push({
+                label: `📄 ${getEntityName(term)}`,
+                value: `term:${term.fullyQualifiedName}`,
+                type: 'term',
+                glossaryId: glossary.id,
+              });
+            }
+          }
+        } catch (termError) {
+          console.warn(`Failed to fetch terms for glossary ${glossary.name}:`, termError);
+        }
+      }
+
+      // Sort options by glossary and then by type (glossaries first, then terms)
+      allOptions.sort((a, b) => {
+        if (a.glossaryId !== b.glossaryId) {
+          return a.glossaryId!.localeCompare(b.glossaryId!);
+        }
+        if (a.type !== b.type) {
+          return a.type === 'glossary' ? -1 : 1;
+        }
+        return a.label.localeCompare(b.label);
+      });
+
+      setOptions(allOptions);
     } catch (error) {
       showErrorToast(error as AxiosError);
     } finally {
@@ -72,12 +119,32 @@ const ChangeParentHierarchy = ({
 
   const handleSubmit = async (value: { parent: string }) => {
     setLoadingState((prev) => ({ ...prev, isSaving: true }));
-    await onSubmit(value.parent);
-    setLoadingState((prev) => ({ ...prev, isSaving: false }));
+    
+    try {
+      const [type, fqn] = value.parent.split(':', 2);
+      
+      if (type === 'glossary') {
+        // Moving to root of a glossary
+        await onSubmit(fqn);
+      } else if (type === 'term') {
+        // Moving under a specific term
+        const selectedOption = options.find((opt: SelectOptions) => opt.value === value.parent);
+        if (selectedOption) {
+          // Extract glossary FQN from the term's FQN
+          const termParts = fqn.split('.');
+          const glossaryFqn = termParts[0];
+          await onSubmit(glossaryFqn, fqn);
+        }
+      }
+    } catch (error) {
+      showErrorToast(error as AxiosError);
+    } finally {
+      setLoadingState((prev) => ({ ...prev, isSaving: false }));
+    }
   };
 
   useEffect(() => {
-    fetchGlossaryTerm();
+    fetchGlossariesAndTerms();
   }, []);
 
   return (
@@ -114,13 +181,13 @@ const ChangeParentHierarchy = ({
           <Select
             showSearch
             data-testid="change-parent-select"
-            filterOption={(input, option) =>
+            filterOption={(input: string, option: any) =>
               (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
             }
             loading={loadingState.isFetching}
             options={options}
             placeholder={t('label.select-field', {
-              field: t('label.parent'),
+              field: t('label.destination'),
             })}
           />
         </Form.Item>

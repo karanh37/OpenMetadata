@@ -55,6 +55,7 @@ import org.openmetadata.schema.api.ValidateGlossaryTagsRequest;
 import org.openmetadata.schema.api.VoteRequest;
 import org.openmetadata.schema.api.data.CreateGlossaryTerm;
 import org.openmetadata.schema.api.data.LoadGlossary;
+import org.openmetadata.schema.api.data.MoveGlossaryTermRequest;
 import org.openmetadata.schema.api.data.RestoreEntity;
 import org.openmetadata.schema.entity.data.Glossary;
 import org.openmetadata.schema.entity.data.GlossaryTerm;
@@ -760,5 +761,86 @@ public class GlossaryTermResource extends EntityResource<GlossaryTerm, GlossaryT
       @Context SecurityContext securityContext,
       @Valid RestoreEntity restore) {
     return restoreEntity(uriInfo, securityContext, restore.getId());
+  }
+
+  @PUT
+  @Path("/{id}/moveAsync")
+  @Operation(
+      operationId = "moveGlossaryTermAsync",
+      summary = "Asynchronously move a glossary term to a different parent or glossary",
+      description = "Move a glossary term to a different parent term or to the root of a different glossary asynchronously.",
+      responses = {
+        @ApiResponse(
+            responseCode = "200",
+            description = "The glossary term",
+            content =
+                @Content(
+                    mediaType = "application/json",
+                    schema = @Schema(implementation = GlossaryTerm.class))),
+        @ApiResponse(responseCode = "400", description = "Bad request"),
+        @ApiResponse(
+            responseCode = "404",
+            description = "Glossary term for instance {id} is not found")
+      })
+  public Response moveGlossaryTermAsync(
+      @Context UriInfo uriInfo,
+      @Context SecurityContext securityContext,
+      @Parameter(description = "Id of the glossary term", schema = @Schema(type = "UUID"))
+          @PathParam("id")
+          UUID id,
+      @Valid MoveGlossaryTermRequest request) {
+    return moveGlossaryTermAsyncInternal(uriInfo, securityContext, id, request);
+  }
+
+  private Response moveGlossaryTermAsyncInternal(
+      UriInfo uriInfo, SecurityContext securityContext, UUID id, MoveGlossaryTermRequest request) {
+    try {
+      // Get the existing glossary term
+      GlossaryTerm existingTerm = repository.get(uriInfo, id, repository.getFields("*"), Include.NON_DELETED);
+      
+      // Get the target glossary
+      GlossaryRepository glossaryRepository = (GlossaryRepository) Entity.getEntityRepository(GLOSSARY);
+      Glossary targetGlossary = glossaryRepository.getByName(
+          uriInfo, request.getNewGlossary(), glossaryRepository.getFields("*"), Include.NON_DELETED);
+      
+      // Get the new parent if specified
+      EntityReference newParentRef = null;
+      if (request.getNewParent() != null) {
+        GlossaryTerm newParent = repository.getByName(
+            uriInfo, request.getNewParent(), repository.getFields("*"), Include.NON_DELETED);
+        newParentRef = newParent.getEntityReference();
+        
+        // Validate that the new parent belongs to the target glossary
+        if (!newParent.getGlossary().getId().equals(targetGlossary.getId())) {
+          throw new IllegalArgumentException(
+              String.format(
+                  "Parent term [%s] does not belong to the target glossary [%s]",
+                  request.getNewParent(), request.getNewGlossary()));
+        }
+      }
+      
+      // Create the entity references for the move
+      EntityReference newGlossaryRef = targetGlossary.getEntityReference();
+      
+      // Validate that we're not moving a term to be a child of itself or its descendants
+      String termFqn = existingTerm.getFullyQualifiedName();
+      if (request.getNewParent() != null && 
+          (request.getNewParent().equals(termFqn) || 
+           request.getNewParent().startsWith(termFqn + "."))) {
+        throw new IllegalArgumentException(
+            CatalogExceptionMessage.invalidGlossaryTermMove(termFqn, request.getNewParent()));
+      }
+      
+      // Update the term with new glossary and parent
+      existingTerm.setGlossary(newGlossaryRef);
+      existingTerm.setParent(newParentRef);
+      
+      // Update the term through the repository
+      GlossaryTerm updatedTerm = repository.createOrUpdate(uriInfo, existingTerm);
+      
+      return Response.ok(addHref(uriInfo, updatedTerm)).build();
+    } catch (IOException e) {
+      throw new RuntimeException("Failed to move glossary term", e);
+    }
   }
 }

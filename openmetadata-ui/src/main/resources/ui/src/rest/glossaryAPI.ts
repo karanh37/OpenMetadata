@@ -36,6 +36,11 @@ export type ListGlossaryTermsParams = ListParams & {
   parent?: string;
 };
 
+export interface MoveGlossaryTermRequest {
+  newGlossary: string;
+  newParent?: string;
+}
+
 const BASE_URL = '/glossaries';
 
 export const getGlossariesList = async (params?: ListParams) => {
@@ -317,4 +322,16 @@ export const getFirstLevelGlossaryTerms = async (parentFQN: string) => {
   });
 
   return data;
+};
+
+export const moveGlossaryTermAsync = async (
+  id: string,
+  moveRequest: MoveGlossaryTermRequest
+) => {
+  const response = await APIClient.put<
+    MoveGlossaryTermRequest,
+    AxiosResponse<GlossaryTerm>
+  >(`/glossaryTerms/${id}/moveAsync`, moveRequest);
+
+  return response.data;
 };
